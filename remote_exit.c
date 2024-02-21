@@ -1,12 +1,14 @@
 #define _GNU_SOURCE
 #include <assert.h>
-#include <stdio.h>
+#include <elf.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 
@@ -74,12 +76,15 @@ static void implant_and_run_code(pid_t tid)
 {
 	struct user_regs_struct uregs;
 	unsigned long *pc;
+	struct iovec iov;
 	int i;
 
 	static_assert(sizeof(exit_group_0) % sizeof(unsigned long) == 0, "");
 	static_assert(sizeof(exit_group_0) <= 4096, "");
 
-	ptrace_or_die(PTRACE_GETREGS, tid, NULL, &uregs, "Unable to fetch registers of thread %i\n",
+	iov.iov_base = &uregs;
+	iov.iov_len = sizeof(uregs);
+	ptrace_or_die(PTRACE_GETREGSET, tid, (void *)NT_PRSTATUS, &iov, "Unable to fetch registers of thread %i\n",
 		      tid);
 
 	pc = get_pc(&uregs);
@@ -98,7 +103,9 @@ static void implant_and_run_code(pid_t tid)
 
 	set_pc(&uregs, pc);
 
-	ptrace_or_die(PTRACE_SETREGS, tid, NULL, &uregs, "Unable to restore registers of thread %i\n",
+	iov.iov_base = &uregs;
+	iov.iov_len = sizeof(uregs);
+	ptrace_or_die(PTRACE_SETREGSET, tid, (void *)NT_PRSTATUS, &iov, "Unable to restore registers of thread %i\n",
 		      tid);
 	ptrace_or_die(PTRACE_CONT, tid, NULL, NULL, "Unable to continue thread %i\n", tid);
 }
