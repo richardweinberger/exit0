@@ -44,10 +44,9 @@ static void seize_thread(pid_t tid)
 }
 
 #ifdef __x86_64__
-static unsigned char exit_group_0[] = {
-	0x48, 0xc7, 0xc0, 0xe7, 0x00, 0x00, 0x00, /* mov $231, %rax */
-	0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x00, /* mov $0, %rdi   */
+static unsigned char syscall[] = {
 	0x0f, 0x05, /* syscall */
+	0x90, 0x90, 0x90, 0x90, 0x90, 0x90, /* nop */
 };
 
 static unsigned long *get_pc(struct user_regs_struct *uregs)
@@ -56,12 +55,18 @@ static unsigned long *get_pc(struct user_regs_struct *uregs)
 	 * Use the current page as memory for our new code.
 	 * The code is less than page size, no need to allocate.
 	 */
-	return (unsigned long *)(uregs->rip & ~4095);
+	return (unsigned long *)(uregs->rip & ~(PAGE_SIZE - 1));
 }
 
 static void set_pc(struct user_regs_struct *uregs, unsigned long *pc)
 {
 	uregs->rip = (unsigned long)pc;
+}
+
+static void setup_exit0(struct user_regs_struct *uregs)
+{
+	uregs->rax = 231;
+	uregs->rdi = 0;
 }
 
 static void reset_syscall(struct user_regs_struct *uregs)
@@ -79,8 +84,8 @@ static void implant_and_run_code(pid_t tid)
 	struct iovec iov;
 	int i;
 
-	static_assert(sizeof(exit_group_0) % sizeof(unsigned long) == 0, "");
-	static_assert(sizeof(exit_group_0) <= 4096, "");
+	static_assert(sizeof(syscall) % sizeof(unsigned long) == 0, "");
+	static_assert(sizeof(syscall) <= PAGE_SIZE, "");
 
 	iov.iov_base = &uregs;
 	iov.iov_len = sizeof(uregs);
@@ -89,9 +94,9 @@ static void implant_and_run_code(pid_t tid)
 
 	pc = get_pc(&uregs);
 
-	for (i = 0; i < sizeof(exit_group_0) / sizeof(unsigned long); i++)
+	for (i = 0; i < sizeof(syscall) / sizeof(unsigned long); i++)
 		ptrace_or_die(PTRACE_POKEDATA, tid, pc + i,
-			      (void *)*((unsigned long *)exit_group_0 + i),
+			      (void *)*((unsigned long *)syscall + i),
 			      "Unable to install code into thread %i\n", tid);
 
 	/*
@@ -102,6 +107,7 @@ static void implant_and_run_code(pid_t tid)
 	reset_syscall(&uregs);
 
 	set_pc(&uregs, pc);
+	setup_exit0(&uregs);
 
 	iov.iov_base = &uregs;
 	iov.iov_len = sizeof(uregs);
