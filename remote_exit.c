@@ -11,6 +11,11 @@
 #include <sys/uio.h>
 #include <sys/user.h>
 #include <sys/wait.h>
+#include <asm/unistd.h>
+
+#ifndef PAGE_SIZE
+#define PAGE_SIZE 4096
+#endif
 
 static void ptrace_or_die(enum __ptrace_request request, pid_t tid, void *addr, void *data,
 			  const char *err_fmt, ...)
@@ -65,7 +70,7 @@ static void set_pc(struct user_regs_struct *uregs, unsigned long *pc)
 
 static void setup_exit0(struct user_regs_struct *uregs)
 {
-	uregs->rax = 231;
+	uregs->rax = __NR_exit_group;
 	uregs->rdi = 0;
 }
 
