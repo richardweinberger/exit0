@@ -49,7 +49,7 @@ static void seize_thread(pid_t tid)
 }
 
 #ifdef __x86_64__
-static unsigned char syscall[] = {
+static unsigned char syscall_asm[] = {
 	0x0f, 0x05, /* syscall */
 	0x90, 0x90, 0x90, 0x90, 0x90, 0x90, /* nop */
 };
@@ -78,6 +78,32 @@ static void reset_syscall(struct user_regs_struct *uregs)
 {
 	uregs->orig_rax = -1;
 }
+#elif __aarch64__
+static unsigned char syscall_asm[] = {
+	0x01, 0x00, 0x00, 0xd4, /* svc #0 */
+	0x1f, 0x20, 0x03, 0xd5, /* nop */
+};
+
+static unsigned long *get_pc(struct user_regs_struct *uregs)
+{
+	return (unsigned long *)(uregs->pc & ~(PAGE_SIZE - 1));
+}
+
+static void set_pc(struct user_regs_struct *uregs, unsigned long *pc)
+{
+	uregs->pc = (unsigned long)pc;
+}
+
+static void setup_exit0(struct user_regs_struct *uregs)
+{
+	uregs->regs[8] = __NR_exit_group;
+	uregs->regs[0] = 0;
+}
+
+static void reset_syscall(struct user_regs_struct *uregs)
+{
+	// Not needed on ARM64
+}
 #else
 #error "Sorry, your CPU architecture is currently not supported!"
 #endif
@@ -89,8 +115,8 @@ static void implant_and_run_code(pid_t tid)
 	struct iovec iov;
 	int i;
 
-	static_assert(sizeof(syscall) % sizeof(unsigned long) == 0, "");
-	static_assert(sizeof(syscall) <= PAGE_SIZE, "");
+	static_assert(sizeof(syscall_asm) % sizeof(unsigned long) == 0, "");
+	static_assert(sizeof(syscall_asm) <= PAGE_SIZE, "");
 
 	iov.iov_base = &uregs;
 	iov.iov_len = sizeof(uregs);
@@ -99,9 +125,9 @@ static void implant_and_run_code(pid_t tid)
 
 	pc = get_pc(&uregs);
 
-	for (i = 0; i < sizeof(syscall) / sizeof(unsigned long); i++)
+	for (i = 0; i < sizeof(syscall_asm) / sizeof(unsigned long); i++)
 		ptrace_or_die(PTRACE_POKEDATA, tid, pc + i,
-			      (void *)*((unsigned long *)syscall + i),
+			      (void *)*((unsigned long *)syscall_asm + i),
 			      "Unable to install code into thread %i\n", tid);
 
 	/*
