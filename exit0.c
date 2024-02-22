@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #include <assert.h>
 #include <elf.h>
 #include <stdarg.h>
