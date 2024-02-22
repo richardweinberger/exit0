@@ -1,8 +1,12 @@
+#include <asm/unistd.h>
 #include <assert.h>
+#include <dirent.h>
 #include <elf.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/time.h>
@@ -10,7 +14,6 @@
 #include <sys/uio.h>
 #include <sys/user.h>
 #include <sys/wait.h>
-#include <asm/unistd.h>
 
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4096
@@ -29,11 +32,18 @@ static void ptrace_or_die(enum __ptrace_request request, pid_t tid, void *addr, 
 	}
 }
 
-static void seize_thread(pid_t tid)
+static void seize_thread(pid_t tid, int lazy)
 {
 	int wstatus;
 
-	ptrace_or_die(PTRACE_SEIZE, tid, 0, 0, "Unable to seize thread %i\n", tid);
+	if (ptrace(PTRACE_SEIZE, tid, 0, 0) == -1) {
+		if ((errno == ESRCH || errno == EPERM) && lazy)
+			return;
+
+		fprintf(stderr, "Unable to seize thread %i: %m\n", tid);
+		exit(1);
+	}
+
 	ptrace_or_die(PTRACE_INTERRUPT, tid, 0, 0, "Unable to interrupt thread %i\n", tid);
 
 	if (wait4(tid, &wstatus, __WALL, NULL) == -1) {
@@ -41,7 +51,7 @@ static void seize_thread(pid_t tid)
 		exit(1);
 	}
 
-	if (WIFSTOPPED(wstatus) == 0) {
+	if (WIFSTOPPED(wstatus) == 0 && !lazy) {
 		fprintf(stderr, "Unexpected state for thread %i: %#x\n", tid, wstatus);
 		exit(1);
 	}
@@ -146,6 +156,84 @@ static void implant_and_run_code(pid_t tid)
 	ptrace_or_die(PTRACE_CONT, tid, NULL, NULL, "Unable to continue thread %i\n", tid);
 }
 
+static void seize_all_threads(pid_t pid)
+{
+	size_t seized_tids_sz = 32;
+	pid_t *seized_tids;
+	int seized_tids_cur = 0;
+	struct dirent **tidlist;
+	char *taskdir;
+	int ntask, i, j;
+	int verify = 0;
+	int found_new_tids;
+
+	if (asprintf(&taskdir, "/proc/%d/task/", pid) == -1) {
+		fprintf(stderr, "Out of memory!\n");
+		exit(1);
+	}
+
+	seized_tids = malloc(seized_tids_sz * sizeof(pid_t));
+	if (seized_tids == NULL) {
+		fprintf(stderr, "Out of memory!\n");
+		exit(1);
+	}
+
+again:
+	found_new_tids = 0;
+	ntask = scandir(taskdir, &tidlist, NULL, alphasort);
+	assert(ntask > 0);
+
+	for (i = 0; i < ntask; i++) {
+		struct dirent *e = tidlist[i];
+
+		if (e->d_type != DT_DIR)
+			goto skip_tid;
+
+		if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
+			goto skip_tid;
+
+		/*
+		 * We trust the kernel to not cheat on us.
+		 */
+		pid_t tid = atoi(e->d_name);
+		assert(tid > 0);
+
+		assert(seized_tids_cur <= seized_tids_sz);
+		if (seized_tids_cur == seized_tids_sz) {
+			seized_tids_sz *= 2;
+			seized_tids = realloc(seized_tids, seized_tids_sz * sizeof(pid_t));
+			if (seized_tids == NULL) {
+				fprintf(stderr, "Out of memory!\n");
+				exit(1);
+			}
+		}
+
+		for (j = 0; j < seized_tids_cur; j++) {
+			if (seized_tids[j] == tid)
+				goto skip_tid;
+		}
+
+		seize_thread(tid, pid != tid);
+		seized_tids[seized_tids_cur++] = tid;
+		found_new_tids = 1;
+
+skip_tid:
+		free(e);
+	}
+	free(tidlist);
+
+	if (found_new_tids) {
+		if (verify++ > 10) {
+			fprintf(stderr, "PID %i is creating faster new threads than I can scan!\n", pid);
+			exit(1);
+		}
+		goto again;
+	}
+
+	free(taskdir);
+	free(seized_tids);
+}
+
 int main(int argc, char **argv)
 {
 	int target_pid;
@@ -161,7 +249,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	seize_thread(target_pid);
+	seize_all_threads(target_pid);
 	implant_and_run_code(target_pid);
 
 	return 0;
