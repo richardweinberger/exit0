@@ -8,5 +8,14 @@ make it look like a graceful exit.
 `exit0` offers this functionality, it stops all threads of a process
 and implants into the main thread a syscall invocation of `exit_group(0)`.
 
+## Building
+
+```
+$ meson b
+$ ninja -C b
+```
+
+## TODO
+
 Currently only AArch64 and x86_64 systems are supported.
 Patches for more architectures and compat modes are welcome!
