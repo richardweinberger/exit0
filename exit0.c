@@ -136,6 +136,12 @@ static void implant_and_run_code(pid_t tid)
 	ptrace_or_die(PTRACE_GETREGSET, tid, (void *)NT_PRSTATUS, &iov, "Unable to fetch registers of thread %i: %m\n",
 		      tid);
 
+	if (iov.iov_len != sizeof(uregs)) {
+		fprintf(stderr, "Got not the amount of registers as expected.\n");
+		fprintf(stderr, "Compat tasks are currently not supported.\n");
+		exit(1);
+	}
+
 	pc = get_pc(&uregs);
 
 	/*
