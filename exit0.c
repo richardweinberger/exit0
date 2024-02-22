@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ *  exit0 - Terminate any program with exit code 0
+ * (c) 2024 - Richard Weinberger <richard@nod.at>
+ */
 #include <asm/unistd.h>
 #include <assert.h>
 #include <dirent.h>
