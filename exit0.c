@@ -32,26 +32,30 @@ static void ptrace_or_die(enum __ptrace_request request, pid_t tid, void *addr, 
 	}
 }
 
-static void seize_thread(pid_t tid, int lazy)
+static void seize_thread(pid_t tid, int is_main)
 {
 	int wstatus;
 
 	if (ptrace(PTRACE_SEIZE, tid, 0, 0) == -1) {
-		if ((errno == ESRCH || errno == EPERM) && lazy)
+		/*
+		 * Both ESRCH and EPERM can happen if a thread exits
+		 * while we're trying to seize it.
+		 */
+		if ((errno == ESRCH || errno == EPERM) && !is_main)
 			return;
 
 		fprintf(stderr, "Unable to seize thread %i: %m\n", tid);
 		exit(1);
 	}
 
-	ptrace_or_die(PTRACE_INTERRUPT, tid, 0, 0, "Unable to interrupt thread %i\n", tid);
+	ptrace_or_die(PTRACE_INTERRUPT, tid, 0, 0, "Unable to interrupt thread %i: %m\n", tid);
 
 	if (wait4(tid, &wstatus, __WALL, NULL) == -1) {
-		fprintf(stderr, "Unable to wait for thread %i\n", tid);
+		fprintf(stderr, "Unable to wait for thread %i: %m\n", tid);
 		exit(1);
 	}
 
-	if (WIFSTOPPED(wstatus) == 0 && !lazy) {
+	if (WIFSTOPPED(wstatus) == 0 && is_main) {
 		fprintf(stderr, "Unexpected state for thread %i: %#x\n", tid, wstatus);
 		exit(1);
 	}
@@ -129,15 +133,18 @@ static void implant_and_run_code(pid_t tid)
 
 	iov.iov_base = &uregs;
 	iov.iov_len = sizeof(uregs);
-	ptrace_or_die(PTRACE_GETREGSET, tid, (void *)NT_PRSTATUS, &iov, "Unable to fetch registers of thread %i\n",
+	ptrace_or_die(PTRACE_GETREGSET, tid, (void *)NT_PRSTATUS, &iov, "Unable to fetch registers of thread %i: %m\n",
 		      tid);
 
 	pc = get_pc(&uregs);
 
+	/*
+	 * PTRACE_POKEDATA writes data word wise.
+	 */
 	for (i = 0; i < sizeof(syscall_asm) / sizeof(unsigned long); i++)
 		ptrace_or_die(PTRACE_POKEDATA, tid, pc + i,
 			      (void *)*((unsigned long *)syscall_asm + i),
-			      "Unable to install code into thread %i\n", tid);
+			      "Unable to install code into thread %i: %m\n", tid);
 
 	/*
 	 * If we interrupted the thread while executing a syscall
@@ -151,9 +158,9 @@ static void implant_and_run_code(pid_t tid)
 
 	iov.iov_base = &uregs;
 	iov.iov_len = sizeof(uregs);
-	ptrace_or_die(PTRACE_SETREGSET, tid, (void *)NT_PRSTATUS, &iov, "Unable to restore registers of thread %i\n",
+	ptrace_or_die(PTRACE_SETREGSET, tid, (void *)NT_PRSTATUS, &iov, "Unable to restore registers of thread %i: %m\n",
 		      tid);
-	ptrace_or_die(PTRACE_CONT, tid, NULL, NULL, "Unable to continue thread %i\n", tid);
+	ptrace_or_die(PTRACE_CONT, tid, NULL, NULL, "Unable to continue thread %i: %m\n", tid);
 }
 
 static void seize_all_threads(pid_t pid)
@@ -213,7 +220,7 @@ again:
 				goto skip_tid;
 		}
 
-		seize_thread(tid, pid != tid);
+		seize_thread(tid, pid == tid);
 		seized_tids[seized_tids_cur++] = tid;
 		found_new_tids = 1;
 
