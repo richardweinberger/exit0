@@ -199,7 +199,10 @@ static void seize_all_threads(pid_t pid)
 again:
 	found_new_tids = 0;
 	ntask = scandir(taskdir, &tidlist, NULL, alphasort);
-	assert(ntask > 0);
+	if (ntask == -1) {
+		fprintf(stderr, "Unable to scan thread list of PID %i: %m\n", pid);
+		exit(1);
+	}
 
 	for (i = 0; i < ntask; i++) {
 		struct dirent *e = tidlist[i];
@@ -250,6 +253,11 @@ skip_tid:
 
 	free(taskdir);
 	free(seized_tids);
+
+	if (!seized_tids_cur) {
+		fprintf(stderr, "Nothing seized, process exited while inspecting\n");
+		exit(1);
+	}
 }
 
 int main(int argc, char **argv)
