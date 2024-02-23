@@ -6,4 +6,6 @@ add_global_arguments([
 	language: 'c'
 )
 
-executable('exit0', 'exit0.c', install: true)
+exit0_exe = executable('exit0', 'exit0.c', install: true)
+
+subdir('tests')
