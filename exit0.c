@@ -271,7 +271,7 @@ int main(int argc, char **argv)
 
 	target_pid = atoi(argv[1]);
 	if (target_pid <= 0) {
-		fprintf(stderr, "Bad PID %i\n", target_pid);
+		fprintf(stderr, "Bad PID %s\n", argv[1]);
 		return 1;
 	}
 
