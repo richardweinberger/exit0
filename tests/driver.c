@@ -20,6 +20,12 @@ int main(int argc, char **argv)
 	/* Run test program. */
 	if (tst_pid == 0) {
 		char *tst_argv[2] = {tst, NULL};
+
+		/*
+		 * Make sure the test program terminates after 10 seconds.
+		 */
+		alarm(10);
+
 		return execve(tst, tst_argv, NULL);
 	}
 
